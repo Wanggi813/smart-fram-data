@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>스마트팜 데이터 다운로드</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      font-family: "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      background: linear-gradient(145deg, #f0fdf4 0%, #ecfeff 50%, #f0f9ff 100%);
+      background-attachment: fixed;
+      color: #1e293b;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── 나뭇잎 배경 ── */
+    .leaves-bg {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .leaf { position: absolute; opacity: 0.13; }
+
+    /* ── 레이아웃 ── */
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 24px 20px 72px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    /* ── 헤더 ── */
+    .header {
+      background: rgba(255,255,255,0.72);
+      border: 1px solid rgba(134,239,172,0.45);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-radius: 20px;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 20px rgba(34,197,94,0.10), 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .header-icon {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, #bbf7d0, #6ee7b7);
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 2px 8px rgba(34,197,94,0.25);
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #166534;
+      line-height: 1.2;
+    }
+    .header .subtitle {
+      font-size: 0.76rem;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+    .header-right { text-align: right; }
+    .date-text { font-size: 0.9rem; font-weight: 700; color: #374151; }
+    .clock-text { font-size: 0.78rem; color: #9ca3af; font-variant-numeric: tabular-nums; }
+
+    /* ── 공통 카드 ── */
+    .card {
+      background: rgba(255,255,255,0.78);
+      border: 1px solid rgba(209,250,229,0.8);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 22px 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    }
+    .card-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #374151;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── 현황 카드 그리드 ── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    .stat-card {
+      background: rgba(255,255,255,0.78);
+      border: 1px solid rgba(209,250,229,0.8);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 18px;
+      padding: 18px 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .card-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .metric-row { display: flex; align-items: baseline; gap: 4px; }
+    .metric-num  { font-size: 2.2rem; font-weight: 800; line-height: 1; }
+    .metric-unit { font-size: 0.9rem; font-weight: 600; color: #9ca3af; }
+    .metric-time { font-size: 0.69rem; color: #b0b8c1; margin-top: 4px; }
+    .temp-color { color: #ef4444; }
+    .humi-color { color: #3b82f6; }
+    .co2-color  { color: #16a34a; }
+
+    /* ── 차트 기간 컨트롤 ── */
+    .chart-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .chart-controls-label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #6b7280;
+    }
+    .period-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    .period-btn {
+      padding: 6px 14px;
+      border: 1px solid rgba(134,239,172,0.6);
+      border-radius: 8px;
+      background: rgba(220,252,231,0.4);
+      color: #374151;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+    .period-btn:hover { background: rgba(187,247,208,0.7); }
+    .period-btn.active {
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      color: white;
+      border-color: transparent;
+      box-shadow: 0 2px 8px rgba(34,197,94,0.3);
+    }
+
+    /* ── 차트 그리드 ── */
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    .chart-grid .card { min-width: 0; overflow: hidden; }
+    .chart-wrap { position: relative; height: 180px; width: 100%; }
+
+    /* ── 통계 요약 ── */
+    .stats-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: -4px;
+    }
+    .stats-header-label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #6b7280;
+    }
+    .stats-period-label {
+      font-size: 0.72rem;
+      color: #b0b8c1;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    .stats-card {
+      background: rgba(255,255,255,0.78);
+      border: 1px solid rgba(209,250,229,0.8);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 18px;
+      padding: 18px 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      min-width: 0;
+    }
+    .stats-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+    }
+    .stats-item-lbl {
+      font-size: 0.62rem;
+      color: #b0b8c1;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 3px;
+    }
+    .stats-item-val {
+      font-size: 1.15rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+    @media (max-width: 720px) {
+      .stats-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── 다운로드 섹션 ── */
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #9ca3af;
+      margin-bottom: 10px;
+    }
+    .quick { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .quick button {
+      padding: 8px 16px;
+      border: 1px solid rgba(134,239,172,0.6);
+      border-radius: 10px;
+      background: rgba(220,252,231,0.5);
+      color: #166534;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+    .quick button:hover {
+      background: rgba(187,247,208,0.7);
+      transform: translateY(-1px);
+    }
+    .date-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .date-row label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: #6b7280;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .date-row input {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1px solid rgba(134,239,172,0.6);
+      border-radius: 12px;
+      font-size: 14px;
+      background: rgba(240,253,244,0.8);
+      color: #1e293b;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .date-row input:focus { border-color: #22c55e; }
+
+    /* 다운로드 버튼 */
+    .btn-primary {
+      padding: 14px 32px;
+      border: none;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+      color: white;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(34,197,94,0.35);
+      transition: 0.15s ease;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(34,197,94,0.4); }
+    .btn-primary:disabled { background: linear-gradient(135deg, #9ca3af, #6b7280); box-shadow: none; cursor: not-allowed; transform: none; }
+
+    /* 상태 메시지 */
+    .status-msg {
+      margin-top: 14px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+      display: none;
+    }
+    .status-msg.info  { background: rgba(220,252,231,0.7); color: #166534; border: 1px solid rgba(134,239,172,0.5); }
+    .status-msg.error { background: rgba(254,226,226,0.7); color: #b91c1c; border: 1px solid rgba(252,165,165,0.5); }
+    .status-msg.ok    { background: rgba(220,252,231,0.9); color: #166534; border: 1px solid #86efac; font-weight: 600; }
+
+    /* 주의사항 */
+    .note {
+      margin-top: 16px;
+      padding: 13px 16px;
+      border-radius: 12px;
+      background: rgba(255,251,235,0.8);
+      color: #92400e;
+      border: 1px solid rgba(253,211,77,0.5);
+      font-size: 12.5px;
+      line-height: 1.75;
+    }
+
+    /* ── 테이블 ── */
+    .table-wrap { overflow-x: auto; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th {
+      padding: 9px 14px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid rgba(209,250,229,0.9);
+      background: rgba(240,253,244,0.6);
+    }
+    td { padding: 9px 14px; border-bottom: 1px solid rgba(209,250,229,0.5); color: #374151; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(240,253,244,0.5); }
+    .no-data { text-align: center; padding: 32px; color: #9ca3af; font-size: 13px; }
+
+    /* ── 반응형 ── */
+    @media (max-width: 720px) {
+      .chart-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .stat-grid { grid-template-columns: 1fr 1fr; }
+      .stat-card:last-child { grid-column: span 2; }
+      .date-row { grid-template-columns: 1fr; }
+      .header h1 { font-size: 1.05rem; }
+      .metric-num { font-size: 1.8rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── 나뭇잎 배경 SVG ── -->
+<div class="leaves-bg">
+  <svg class="leaf" style="top:-30px;left:-40px;width:260px;" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#16a34a"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#15803d" stroke-width="3"/>
+    <line x1="100" y1="80"  x2="55"  y2="120" stroke="#15803d" stroke-width="1.5"/>
+    <line x1="100" y1="110" x2="148" y2="145" stroke="#15803d" stroke-width="1.5"/>
+    <line x1="100" y1="145" x2="58"  y2="178" stroke="#15803d" stroke-width="1.5"/>
+    <line x1="100" y1="170" x2="142" y2="200" stroke="#15803d" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="top:30px;left:150px;width:130px;transform:rotate(30deg);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#4ade80"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#16a34a" stroke-width="2.5"/>
+    <line x1="100" y1="90"  x2="58"  y2="125" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="125" x2="142" y2="158" stroke="#16a34a" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="top:-20px;right:80px;width:170px;transform:rotate(-20deg);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#22c55e"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#16a34a" stroke-width="2.5"/>
+    <line x1="100" y1="80"  x2="55"  y2="115" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="115" x2="145" y2="148" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="150" x2="57"  y2="180" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="180" x2="144" y2="208" stroke="#16a34a" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="top:-10px;right:-30px;width:210px;transform:rotate(15deg);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#86efac"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#4ade80" stroke-width="2.5"/>
+    <line x1="100" y1="70"  x2="60"  y2="105" stroke="#4ade80" stroke-width="1.5"/>
+    <line x1="100" y1="110" x2="140" y2="140" stroke="#4ade80" stroke-width="1.5"/>
+    <line x1="100" y1="148" x2="62"  y2="175" stroke="#4ade80" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="bottom:-20px;left:-20px;width:190px;transform:rotate(-10deg) scaleX(-1);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#4ade80"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#16a34a" stroke-width="2.5"/>
+    <line x1="100" y1="80"  x2="55"  y2="115" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="120" x2="145" y2="150" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="158" x2="58"  y2="185" stroke="#16a34a" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="bottom:10px;left:190px;width:110px;transform:rotate(20deg);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#16a34a"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#15803d" stroke-width="2.5"/>
+    <line x1="100" y1="100" x2="62"  y2="132" stroke="#15803d" stroke-width="1.5"/>
+    <line x1="100" y1="138" x2="138" y2="165" stroke="#15803d" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="bottom:-30px;right:60px;width:180px;transform:rotate(-25deg);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#22c55e"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#16a34a" stroke-width="2.5"/>
+    <line x1="100" y1="75"  x2="58"  y2="108" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="112" x2="142" y2="142" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="150" x2="60"  y2="178" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="182" x2="140" y2="206" stroke="#16a34a" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="bottom:-10px;right:-20px;width:155px;transform:rotate(10deg) scaleX(-1);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#86efac"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#4ade80" stroke-width="2.5"/>
+    <line x1="100" y1="90"  x2="62"  y2="118" stroke="#4ade80" stroke-width="1.5"/>
+    <line x1="100" y1="130" x2="138" y2="158" stroke="#4ade80" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="top:42%;left:-15px;width:95px;transform:rotate(-5deg);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#4ade80"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#16a34a" stroke-width="2.5"/>
+    <line x1="100" y1="110" x2="65"  y2="140" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="160" x2="135" y2="188" stroke="#16a34a" stroke-width="1.5"/>
+  </svg>
+  <svg class="leaf" style="top:36%;right:-10px;width:105px;transform:rotate(8deg) scaleX(-1);" viewBox="0 0 200 260" fill="none">
+    <path d="M100 250 C20 180 -10 80 100 10 C210 80 180 180 100 250Z" fill="#22c55e"/>
+    <line x1="100" y1="10" x2="100" y2="250" stroke="#16a34a" stroke-width="2.5"/>
+    <line x1="100" y1="100" x2="62"  y2="130" stroke="#16a34a" stroke-width="1.5"/>
+    <line x1="100" y1="148" x2="138" y2="173" stroke="#16a34a" stroke-width="1.5"/>
+  </svg>
+</div>
+
+<!-- ── 본문 ── -->
+<div class="wrap">
+
+  <!-- 헤더 -->
+  <header class="header">
+    <div class="header-left">
+      <div class="header-icon">🌿</div>
+      <div>
+        <h1>스마트팜 환경 데이터</h1>
+        <div class="subtitle">온도 · 습도 · CO₂ 실시간 현황 및 CSV 다운로드</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="date-text" id="dateText">—</div>
+      <div class="clock-text" id="clockText">—</div>
+    </div>
+  </header>
+
+  <!-- 현황 카드 -->
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="card-label">현재 온도</div>
+      <div class="metric-row">
+        <span class="metric-num temp-color" id="valTemp">—</span>
+        <span class="metric-unit">°C</span>
+      </div>
+      <div class="metric-time" id="updTemp"></div>
+    </div>
+    <div class="stat-card">
+      <div class="card-label">현재 습도</div>
+      <div class="metric-row">
+        <span class="metric-num humi-color" id="valHumi">—</span>
+        <span class="metric-unit">%</span>
+      </div>
+      <div class="metric-time" id="updHumi"></div>
+    </div>
+    <div class="stat-card">
+      <div class="card-label">현재 CO₂</div>
+      <div class="metric-row">
+        <span class="metric-num co2-color" id="valCo2">—</span>
+        <span class="metric-unit">ppm</span>
+      </div>
+      <div class="metric-time" id="updCo2"></div>
+    </div>
+  </div>
+
+  <!-- 차트 기간 선택 -->
+  <div class="chart-controls">
+    <span class="chart-controls-label">측정 그래프</span>
+    <div class="period-btns">
+      <button class="period-btn" data-h="1"  onclick="setPeriod(1)">1시간</button>
+      <button class="period-btn" data-h="6"  onclick="setPeriod(6)">6시간</button>
+      <button class="period-btn active" data-h="24" onclick="setPeriod(24)">24시간</button>
+      <button class="period-btn" data-h="0"  onclick="setPeriod(0)">전체</button>
+    </div>
+  </div>
+
+  <!-- 차트 3분할 -->
+  <div class="chart-grid">
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-dot" style="background:#ef4444;box-shadow:0 0 5px rgba(239,68,68,0.5);"></div>
+        온도 (°C)
+      </div>
+      <div class="chart-wrap"><canvas id="chartTemp"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-dot" style="background:#3b82f6;box-shadow:0 0 5px rgba(59,130,246,0.5);"></div>
+        습도 (%)
+      </div>
+      <div class="chart-wrap"><canvas id="chartHumi"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-dot" style="background:#22c55e;box-shadow:0 0 5px rgba(34,197,94,0.5);"></div>
+        CO₂ (ppm)
+      </div>
+      <div class="chart-wrap"><canvas id="chartCo2"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 통계 요약 -->
+  <div class="stats-header">
+    <span class="stats-header-label">통계 요약</span>
+    <span class="stats-period-label" id="statsPeriodLabel"></span>
+  </div>
+  <div class="stats-grid">
+    <div class="stats-card">
+      <div class="stats-title"><span style="color:#ef4444;font-size:0.85rem">●</span> 온도 (°C)</div>
+      <div class="stats-row">
+        <div>
+          <div class="stats-item-lbl">최솟값</div>
+          <div class="stats-item-val temp-color" id="statTMin">—</div>
+        </div>
+        <div>
+          <div class="stats-item-lbl">최댓값</div>
+          <div class="stats-item-val temp-color" id="statTMax">—</div>
+        </div>
+        <div>
+          <div class="stats-item-lbl">평균</div>
+          <div class="stats-item-val temp-color" id="statTAvg">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="stats-card">
+      <div class="stats-title"><span style="color:#3b82f6;font-size:0.85rem">●</span> 습도 (%)</div>
+      <div class="stats-row">
+        <div>
+          <div class="stats-item-lbl">최솟값</div>
+          <div class="stats-item-val humi-color" id="statHMin">—</div>
+        </div>
+        <div>
+          <div class="stats-item-lbl">최댓값</div>
+          <div class="stats-item-val humi-color" id="statHMax">—</div>
+        </div>
+        <div>
+          <div class="stats-item-lbl">평균</div>
+          <div class="stats-item-val humi-color" id="statHAvg">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="stats-card">
+      <div class="stats-title"><span style="color:#22c55e;font-size:0.85rem">●</span> CO₂ (ppm)</div>
+      <div class="stats-row">
+        <div>
+          <div class="stats-item-lbl">최솟값</div>
+          <div class="stats-item-val co2-color" id="statCMin">—</div>
+        </div>
+        <div>
+          <div class="stats-item-lbl">최댓값</div>
+          <div class="stats-item-val co2-color" id="statCMax">—</div>
+        </div>
+        <div>
+          <div class="stats-item-lbl">평균</div>
+          <div class="stats-item-val co2-color" id="statCAvg">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 다운로드 -->
+  <div class="card">
+    <div class="card-title">
+      <div class="card-title-dot" style="background:#16a34a;box-shadow:0 0 5px rgba(22,163,74,0.5);"></div>
+      CSV 데이터 다운로드
+    </div>
+
+    <div class="section-label">빠른 기간 선택</div>
+    <div class="quick">
+      <button type="button" onclick="setRange(1)">최근 1일</button>
+      <button type="button" onclick="setRange(7)">최근 7일</button>
+      <button type="button" onclick="setRange(30)">최근 30일</button>
+      <button type="button" onclick="clearRange()">전체 기간</button>
+    </div>
+
+    <div class="date-row">
+      <div>
+        <label for="dtStart">시작 시각</label>
+        <input id="dtStart" type="datetime-local" />
+      </div>
+      <div>
+        <label for="dtEnd">종료 시각</label>
+        <input id="dtEnd" type="datetime-local" />
+      </div>
+    </div>
+
+    <button class="btn-primary" id="btnDl" type="button" onclick="downloadCsv()">⬇ CSV 다운로드</button>
+    <div class="status-msg" id="dlStatus"></div>
+
+    <div class="note">
+      ※ 한 번에 최대 <strong>8,000건</strong>씩 요청하며, 기간이 길면 자동으로 분할하여 모두 저장합니다.<br>
+      ※ Excel에서 파일을 열 때 한글이 깨지면 <strong>데이터 탭 → 텍스트/CSV 가져오기</strong>에서 인코딩을 UTF-8로 선택하세요.
+    </div>
+  </div>
+
+  <!-- 미리보기 테이블 -->
+  <div class="card">
+    <div class="card-title">
+      <div class="card-title-dot" style="background:#3b82f6;box-shadow:0 0 5px rgba(59,130,246,0.5);"></div>
+      최근 20건 미리보기
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>측정 시각 (KST)</th>
+            <th>온도 (°C)</th>
+            <th>습도 (%)</th>
+            <th>CO₂ (ppm)</th>
+          </tr>
+        </thead>
+        <tbody id="previewBody">
+          <tr><td colspan="4" class="no-data">데이터를 불러오는 중…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /wrap -->
+
+<script>
+  /* ── 설정 ── */
+  const CHANNEL_ID = '3341718';
+  const READ_KEY   = 'QX0B9GEJC3B0XOPC';
+
+  /* ── 시계 ── */
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('dateText').textContent = now.toLocaleDateString('ko-KR', {
+      year: 'numeric', month: 'long', day: 'numeric', weekday: 'short'
+    });
+    document.getElementById('clockText').textContent = now.toLocaleTimeString('ko-KR', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  /* ── 유틸 ── */
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function toInputVal(d) {
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function toKST(iso) {
+    return new Date(iso).toLocaleString('ko-KR', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+  }
+
+  function setRange(days) {
+    const end = new Date(), start = new Date(end - days * 86400000);
+    document.getElementById('dtStart').value = toInputVal(start);
+    document.getElementById('dtEnd').value   = toInputVal(end);
+  }
+  function clearRange() {
+    document.getElementById('dtStart').value = '';
+    document.getElementById('dtEnd').value   = '';
+  }
+
+  /* ── ThingSpeak 요청 ── */
+  async function fetchFeeds({ start, end, results = 8000 } = {}) {
+    const p = new URLSearchParams({ api_key: READ_KEY, results, timezone: 'Asia/Seoul' });
+    if (start) p.set('start', start);
+    if (end)   p.set('end',   end);
+    const res = await fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?${p}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  /* ── 대시보드 로드 ── */
+  let chartInsts = [null, null, null];
+  let currentPeriodHours = 24;
+  const fmt = v => v != null && v !== '' ? parseFloat(v) : null;
+
+  async function loadDashboard() {
+    try {
+      /* 최신값 카드: 항상 최신 1건 */
+      const latestData  = await fetchFeeds({ results: 1 });
+      const latestFeeds = latestData.feeds || [];
+      if (latestFeeds.length) {
+        const last = latestFeeds[0];
+        const t = fmt(last.field1), h = fmt(last.field2), c = fmt(last.field3);
+        setText('valTemp', t != null ? t.toFixed(1) : '—');
+        setText('valHumi', h != null ? h.toFixed(1) : '—');
+        setText('valCo2',  c != null ? Math.round(c) : '—');
+        const ts = `갱신: ${toKST(last.created_at)}`;
+        ['updTemp','updHumi','updCo2'].forEach(id => setText(id, ts));
+      }
+      /* 기간 데이터: 차트 + 통계 + 테이블 */
+      await loadPeriodData();
+    } catch(e) {
+      document.getElementById('previewBody').innerHTML =
+        `<tr><td colspan="4" class="no-data">불러오기 실패: ${e.message}</td></tr>`;
+    }
+  }
+
+  async function loadPeriodData() {
+    let start = null;
+    if (currentPeriodHours > 0) {
+      const s = new Date(Date.now() - currentPeriodHours * 3600000);
+      start = s.toISOString().slice(0,19).replace('T',' ');
+    }
+    const data  = await fetchFeeds({ start, results: 8000 });
+    const feeds = data.feeds || [];
+    if (!feeds.length) { setNoData(); return; }
+
+    /* 차트 */
+    const labels = feeds.map(f => toKST(f.created_at).slice(5, 16));
+    drawChart(labels, feeds.map(f => fmt(f.field1)), feeds.map(f => fmt(f.field2)), feeds.map(f => fmt(f.field3)));
+
+    /* 통계 */
+    updateStats(feeds);
+
+    /* 테이블 최근 20건 */
+    const rows = [...feeds].reverse().slice(0, 20);
+    document.getElementById('previewBody').innerHTML = rows.map(f => {
+      const fv = (v, dec) => v != null && v !== '' ? parseFloat(v).toFixed(dec) : '—';
+      return `<tr>
+        <td>${toKST(f.created_at)}</td>
+        <td>${fv(f.field1,1)}</td>
+        <td>${fv(f.field2,1)}</td>
+        <td>${f.field3 != null && f.field3 !== '' ? Math.round(parseFloat(f.field3)) : '—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function updateStats(feeds) {
+    const vals = field => feeds.map(f => fmt(f[field])).filter(v => v !== null);
+    const stat = arr => {
+      if (!arr.length) return { min:'—', max:'—', avg:'—' };
+      return {
+        min: Math.min(...arr).toFixed(1),
+        max: Math.max(...arr).toFixed(1),
+        avg: (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1)
+      };
+    };
+    const statInt = arr => {
+      if (!arr.length) return { min:'—', max:'—', avg:'—' };
+      return {
+        min: Math.round(Math.min(...arr)),
+        max: Math.round(Math.max(...arr)),
+        avg: Math.round(arr.reduce((a,b)=>a+b,0)/arr.length)
+      };
+    };
+    const ts = stat(vals('field1')), hs = stat(vals('field2')), cs = statInt(vals('field3'));
+    setText('statTMin', ts.min); setText('statTMax', ts.max); setText('statTAvg', ts.avg);
+    setText('statHMin', hs.min); setText('statHMax', hs.max); setText('statHAvg', hs.avg);
+    setText('statCMin', cs.min); setText('statCMax', cs.max); setText('statCAvg', cs.avg);
+    const periodLabel = currentPeriodHours === 0 ? '전체 기간' : `최근 ${currentPeriodHours}시간`;
+    setText('statsPeriodLabel', `${periodLabel} · ${feeds.length.toLocaleString()}건 기준`);
+  }
+
+  function setPeriod(hours) {
+    currentPeriodHours = hours;
+    document.querySelectorAll('.period-btn').forEach(b =>
+      b.classList.toggle('active', Number(b.dataset.h) === hours)
+    );
+    loadPeriodData();
+  }
+
+  function setNoData() {
+    document.getElementById('previewBody').innerHTML =
+      '<tr><td colspan="4" class="no-data">데이터가 없습니다.</td></tr>';
+  }
+  function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+
+  function drawChart(labels, tData, hData, cData) {
+    const configs = [
+      { id: 'chartTemp', data: tData, color: '#ef4444', rgba: '239,68,68',   label: '온도(°C)' },
+      { id: 'chartHumi', data: hData, color: '#3b82f6', rgba: '59,130,246',  label: '습도(%)'  },
+      { id: 'chartCo2',  data: cData, color: '#22c55e', rgba: '34,197,94',   label: 'CO₂(ppm)' }
+    ];
+
+    const tooltipStyle = {
+      backgroundColor: 'rgba(255,255,255,0.95)',
+      titleColor: '#374151', bodyColor: '#374151',
+      borderColor: 'rgba(134,239,172,0.6)', borderWidth: 1,
+      padding: 10, cornerRadius: 10
+    };
+
+    configs.forEach(({ id, data, color, rgba, label }, i) => {
+      if (chartInsts[i]) chartInsts[i].destroy();
+      const ctx  = document.getElementById(id).getContext('2d');
+      const grad = ctx.createLinearGradient(0, 0, 0, 180);
+      grad.addColorStop(0, `rgba(${rgba},0.22)`);
+      grad.addColorStop(1, `rgba(${rgba},0)`);
+      chartInsts[i] = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [{ label, data, borderColor: color, backgroundColor: grad,
+          tension: 0.4, pointRadius: 0, borderWidth: 2, fill: true }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: tooltipStyle },
+          scales: {
+            x: { ticks: { color: '#9ca3af', font: { size: 10 }, maxTicksLimit: 5 }, grid: { color: 'rgba(0,0,0,0.04)' } },
+            y: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } }
+          }
+        }
+      });
+    });
+  }
+
+  /* ── CSV 다운로드 ── */
+  async function downloadCsv() {
+    const btn = document.getElementById('btnDl');
+    const msg = document.getElementById('dlStatus');
+    const startVal = document.getElementById('dtStart').value;
+    const endVal   = document.getElementById('dtEnd').value;
+
+    btn.disabled = true;
+    showMsg(msg, 'info', '데이터를 가져오는 중입니다…');
+
+    try {
+      const toTs = v => v ? new Date(v).toISOString().slice(0,19).replace('T',' ') : null;
+      let allFeeds = [], reqStart = toTs(startVal), page = 0;
+
+      while (true) {
+        page++;
+        showMsg(msg, 'info', `데이터 수집 중… (${page}번째 요청, 현재 ${allFeeds.length.toLocaleString()}건)`);
+        const data  = await fetchFeeds({ start: reqStart, end: toTs(endVal), results: 8000 });
+        const feeds = data.feeds || [];
+        allFeeds = allFeeds.concat(feeds);
+        if (feeds.length < 8000 || page >= 50) break;
+        const last = new Date(feeds[feeds.length-1].created_at);
+        last.setSeconds(last.getSeconds() + 1);
+        reqStart = last.toISOString().slice(0,19).replace('T',' ');
+      }
+
+      if (!allFeeds.length) { showMsg(msg, 'error', '선택한 기간에 데이터가 없습니다.'); btn.disabled = false; return; }
+
+      const header = '측정시각(KST),온도(°C),습도(%),CO2(ppm)\n';
+      const body = allFeeds.map(f => [
+        toKST(f.created_at),
+        f.field1 != null && f.field1 !== '' ? parseFloat(f.field1).toFixed(1) : '',
+        f.field2 != null && f.field2 !== '' ? parseFloat(f.field2).toFixed(1) : '',
+        f.field3 != null && f.field3 !== '' ? Math.round(parseFloat(f.field3)) : ''
+      ].join(',')).join('\n');
+
+      const blob = new Blob(['﻿' + header + body], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `스마트팜_데이터_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(a.href);
+
+      showMsg(msg, 'ok', `완료! 총 ${allFeeds.length.toLocaleString()}건 다운로드되었습니다.`);
+    } catch(e) {
+      showMsg(msg, 'error', `오류 발생: ${e.message}`);
+    }
+    btn.disabled = false;
+  }
+
+  function showMsg(el, type, text) {
+    el.className = `status-msg ${type}`;
+    el.textContent = text;
+    el.style.display = 'block';
+  }
+
+  /* ── 초기화 ── */
+  loadDashboard();
+  setInterval(loadDashboard, 5 * 60 * 1000);
+</script>
+</body>
+</html>
