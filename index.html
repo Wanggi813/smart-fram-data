@@ -607,7 +607,7 @@
     <div class="status-msg" id="dlStatus"></div>
 
     <div class="note">
-      ※ 한 번에 최대 <strong>8,000건</strong>씩 요청하며, 기간이 길면 자동으로 분할하여 모두 저장합니다.<br>
+      ※ Google Sheets에 저장된 데이터를 불러와 선택한 기간만 CSV로 저장합니다.<br>
       ※ Excel에서 파일을 열 때 한글이 깨지면 <strong>데이터 탭 → 텍스트/CSV 가져오기</strong>에서 인코딩을 UTF-8로 선택하세요.
     </div>
   </div>
@@ -638,9 +638,12 @@
 </div><!-- /wrap -->
 
 <script>
-  /* ── 설정 ── */
-  const CHANNEL_ID = '3341718';
-  const READ_KEY   = 'QX0B9GEJC3B0XOPC';
+  /* ── Google Apps Script 설정 ── */
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxP94AAzmT_sdHhQghPorqv8X0V5wImboQT4kpDtte9ATFHS1bIuV5ENkei6TEHRNCoVg/exec';
+
+  // Apps Script의 READ_KEY와 반드시 같아야 합니다.
+  // 학생에게 공개되어도 "읽기"만 가능한 키입니다. WRITE_KEY는 절대 HTML에 넣지 마세요.
+  const READ_KEY = 'smartfarm_read_1234';
 
   /* ── 시계 ── */
   function updateClock() {
@@ -680,61 +683,134 @@
     document.getElementById('dtEnd').value   = '';
   }
 
-  /* ── ThingSpeak 요청 ── */
-  async function fetchFeeds({ start, end, results = 8000 } = {}) {
-    const p = new URLSearchParams({ api_key: READ_KEY, results, timezone: 'Asia/Seoul' });
-    if (start) p.set('start', start);
-    if (end)   p.set('end',   end);
-    const res = await fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?${p}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
+  function setText(id, v) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = v;
+  }
+
+  function fmt(v) {
+    return v != null && v !== '' ? parseFloat(v) : null;
+  }
+
+  /* ── Apps Script JSONP 요청 ──
+     fetch() 대신 JSONP를 사용합니다.
+     Vercel 같은 외부 사이트에서 Apps Script를 호출할 때 CORS 문제를 피하기 위함입니다.
+  */
+  function fetchJsonp(params = {}) {
+    return new Promise((resolve, reject) => {
+      const callbackName = `gasCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+      const query = new URLSearchParams({
+        action: 'json',
+        readKey: READ_KEY,
+        callback: callbackName,
+        ...params
+      });
+
+      const script = document.createElement('script');
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Apps Script 응답 시간이 초과되었습니다.'));
+      }, 20000);
+
+      function cleanup() {
+        clearTimeout(timeout);
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+
+      window[callbackName] = data => {
+        cleanup();
+        if (!data || data.ok === false) {
+          reject(new Error(data?.error || 'Apps Script 응답 오류'));
+          return;
+        }
+        resolve(data);
+      };
+
+      script.onerror = () => {
+        cleanup();
+        reject(new Error('Apps Script 요청에 실패했습니다. 배포 권한을 확인하세요.'));
+      };
+
+      script.src = `${APPS_SCRIPT_URL}?${query.toString()}`;
+      document.body.appendChild(script);
+    });
+  }
+
+  function toSheetDateParam(v) {
+    // Apps Script에는 UTC 기준의 "YYYY-MM-DD HH:mm:ss" 형태로 전달합니다.
+    return v ? new Date(v).toISOString().slice(0, 19).replace('T', ' ') : null;
+  }
+
+  async function fetchFeeds({ start, end, results = 8000, fromStart = false } = {}) {
+    const params = { results: String(results) };
+
+    if (start) params.start = start;
+    if (end) params.end = end;
+    if (fromStart) params.fromStart = '1';
+
+    return fetchJsonp(params);
   }
 
   /* ── 대시보드 로드 ── */
   let chartInsts = [null, null, null];
   let currentPeriodHours = 24;
-  const fmt = v => v != null && v !== '' ? parseFloat(v) : null;
 
   async function loadDashboard() {
     try {
-      /* 최신값 카드: 항상 최신 1건 */
+      // 최신값 카드: 항상 가장 최근 1건
       const latestData  = await fetchFeeds({ results: 1 });
       const latestFeeds = latestData.feeds || [];
+
       if (latestFeeds.length) {
-        const last = latestFeeds[0];
+        const last = latestFeeds[latestFeeds.length - 1];
         const t = fmt(last.field1), h = fmt(last.field2), c = fmt(last.field3);
+
         setText('valTemp', t != null ? t.toFixed(1) : '—');
         setText('valHumi', h != null ? h.toFixed(1) : '—');
         setText('valCo2',  c != null ? Math.round(c) : '—');
+
         const ts = `갱신: ${toKST(last.created_at)}`;
         ['updTemp','updHumi','updCo2'].forEach(id => setText(id, ts));
       }
-      /* 기간 데이터: 차트 + 통계 + 테이블 */
+
       await loadPeriodData();
     } catch(e) {
       document.getElementById('previewBody').innerHTML =
         `<tr><td colspan="4" class="no-data">불러오기 실패: ${e.message}</td></tr>`;
+      setNoStats();
     }
   }
 
   async function loadPeriodData() {
     let start = null;
+
     if (currentPeriodHours > 0) {
       const s = new Date(Date.now() - currentPeriodHours * 3600000);
-      start = s.toISOString().slice(0,19).replace('T',' ');
+      start = s.toISOString().slice(0, 19).replace('T', ' ');
     }
+
     const data  = await fetchFeeds({ start, results: 8000 });
     const feeds = data.feeds || [];
-    if (!feeds.length) { setNoData(); return; }
 
-    /* 차트 */
+    if (!feeds.length) {
+      setNoData();
+      setNoStats();
+      drawChart([], [], [], []);
+      return;
+    }
+
     const labels = feeds.map(f => toKST(f.created_at).slice(5, 16));
-    drawChart(labels, feeds.map(f => fmt(f.field1)), feeds.map(f => fmt(f.field2)), feeds.map(f => fmt(f.field3)));
+    drawChart(
+      labels,
+      feeds.map(f => fmt(f.field1)),
+      feeds.map(f => fmt(f.field2)),
+      feeds.map(f => fmt(f.field3))
+    );
 
-    /* 통계 */
     updateStats(feeds);
 
-    /* 테이블 최근 20건 */
     const rows = [...feeds].reverse().slice(0, 20);
     document.getElementById('previewBody').innerHTML = rows.map(f => {
       const fv = (v, dec) => v != null && v !== '' ? parseFloat(v).toFixed(dec) : '—';
@@ -748,7 +824,8 @@
   }
 
   function updateStats(feeds) {
-    const vals = field => feeds.map(f => fmt(f[field])).filter(v => v !== null);
+    const vals = field => feeds.map(f => fmt(f[field])).filter(v => v !== null && Number.isFinite(v));
+
     const stat = arr => {
       if (!arr.length) return { min:'—', max:'—', avg:'—' };
       return {
@@ -757,6 +834,7 @@
         avg: (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1)
       };
     };
+
     const statInt = arr => {
       if (!arr.length) return { min:'—', max:'—', avg:'—' };
       return {
@@ -765,12 +843,23 @@
         avg: Math.round(arr.reduce((a,b)=>a+b,0)/arr.length)
       };
     };
-    const ts = stat(vals('field1')), hs = stat(vals('field2')), cs = statInt(vals('field3'));
+
+    const ts = stat(vals('field1'));
+    const hs = stat(vals('field2'));
+    const cs = statInt(vals('field3'));
+
     setText('statTMin', ts.min); setText('statTMax', ts.max); setText('statTAvg', ts.avg);
     setText('statHMin', hs.min); setText('statHMax', hs.max); setText('statHAvg', hs.avg);
     setText('statCMin', cs.min); setText('statCMax', cs.max); setText('statCAvg', cs.avg);
-    const periodLabel = currentPeriodHours === 0 ? '전체 기간' : `최근 ${currentPeriodHours}시간`;
+
+    const periodLabel = currentPeriodHours === 0 ? '최근 8,000건' : `최근 ${currentPeriodHours}시간`;
     setText('statsPeriodLabel', `${periodLabel} · ${feeds.length.toLocaleString()}건 기준`);
+  }
+
+  function setNoStats() {
+    ['statTMin','statTMax','statTAvg','statHMin','statHMax','statHAvg','statCMin','statCMax','statCAvg']
+      .forEach(id => setText(id, '—'));
+    setText('statsPeriodLabel', '');
   }
 
   function setPeriod(hours) {
@@ -785,7 +874,6 @@
     document.getElementById('previewBody').innerHTML =
       '<tr><td colspan="4" class="no-data">데이터가 없습니다.</td></tr>';
   }
-  function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
 
   function drawChart(labels, tData, hData, cData) {
     const configs = [
@@ -803,16 +891,30 @@
 
     configs.forEach(({ id, data, color, rgba, label }, i) => {
       if (chartInsts[i]) chartInsts[i].destroy();
+
       const ctx  = document.getElementById(id).getContext('2d');
       const grad = ctx.createLinearGradient(0, 0, 0, 180);
       grad.addColorStop(0, `rgba(${rgba},0.22)`);
       grad.addColorStop(1, `rgba(${rgba},0)`);
+
       chartInsts[i] = new Chart(ctx, {
         type: 'line',
-        data: { labels, datasets: [{ label, data, borderColor: color, backgroundColor: grad,
-          tension: 0.4, pointRadius: 0, borderWidth: 2, fill: true }] },
+        data: {
+          labels,
+          datasets: [{
+            label,
+            data,
+            borderColor: color,
+            backgroundColor: grad,
+            tension: 0.4,
+            pointRadius: 0,
+            borderWidth: 2,
+            fill: true
+          }]
+        },
         options: {
-          responsive: true, maintainAspectRatio: false,
+          responsive: true,
+          maintainAspectRatio: false,
           plugins: { legend: { display: false }, tooltip: tooltipStyle },
           scales: {
             x: { ticks: { color: '#9ca3af', font: { size: 10 }, maxTicksLimit: 5 }, grid: { color: 'rgba(0,0,0,0.04)' } },
@@ -831,25 +933,41 @@
     const endVal   = document.getElementById('dtEnd').value;
 
     btn.disabled = true;
-    showMsg(msg, 'info', '데이터를 가져오는 중입니다…');
+    showMsg(msg, 'info', 'Google Sheets 데이터를 가져오는 중입니다…');
 
     try {
-      const toTs = v => v ? new Date(v).toISOString().slice(0,19).replace('T',' ') : null;
-      let allFeeds = [], reqStart = toTs(startVal), page = 0;
+      let allFeeds = [];
+      let reqStart = toSheetDateParam(startVal);
+      const reqEnd = toSheetDateParam(endVal);
+      const fromStart = !reqStart;
+      let page = 0;
 
       while (true) {
         page++;
         showMsg(msg, 'info', `데이터 수집 중… (${page}번째 요청, 현재 ${allFeeds.length.toLocaleString()}건)`);
-        const data  = await fetchFeeds({ start: reqStart, end: toTs(endVal), results: 8000 });
+
+        const data  = await fetchFeeds({
+          start: reqStart,
+          end: reqEnd,
+          results: 8000,
+          fromStart: fromStart && page === 1
+        });
+
         const feeds = data.feeds || [];
         allFeeds = allFeeds.concat(feeds);
+
         if (feeds.length < 8000 || page >= 50) break;
-        const last = new Date(feeds[feeds.length-1].created_at);
+
+        const last = new Date(feeds[feeds.length - 1].created_at);
         last.setSeconds(last.getSeconds() + 1);
-        reqStart = last.toISOString().slice(0,19).replace('T',' ');
+        reqStart = last.toISOString().slice(0, 19).replace('T', ' ');
       }
 
-      if (!allFeeds.length) { showMsg(msg, 'error', '선택한 기간에 데이터가 없습니다.'); btn.disabled = false; return; }
+      if (!allFeeds.length) {
+        showMsg(msg, 'error', '선택한 기간에 데이터가 없습니다.');
+        btn.disabled = false;
+        return;
+      }
 
       const header = '측정시각(KST),온도(°C),습도(%),CO2(ppm)\n';
       const body = allFeeds.map(f => [
@@ -859,17 +977,22 @@
         f.field3 != null && f.field3 !== '' ? Math.round(parseFloat(f.field3)) : ''
       ].join(',')).join('\n');
 
-      const blob = new Blob(['﻿' + header + body], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob(['\ufeff' + header + body], { type: 'text/csv;charset=utf-8;' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `스마트팜_데이터_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(a.href);
+      document.body.appendChild(a);
+      a.click();
+
+      const objectUrl = a.href;
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
 
       showMsg(msg, 'ok', `완료! 총 ${allFeeds.length.toLocaleString()}건 다운로드되었습니다.`);
     } catch(e) {
       showMsg(msg, 'error', `오류 발생: ${e.message}`);
     }
+
     btn.disabled = false;
   }
 
